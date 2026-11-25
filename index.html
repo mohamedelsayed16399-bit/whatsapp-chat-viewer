@@ -3563,6 +3563,8 @@ function hydrateFromEmbedded(data){
     const emo={}; Object.values(a.per).forEach(p=>Object.entries(p.emo).forEach(([e,c])=>emo[e]=(emo[e]||0)+c));
     const te=Object.entries(emo).sort((x,y)=>y[1]-x[1])[0];
     if(te) cards.push({bg:g(),e:te[0],t:'إيموجي الشات',big:fmtN(te[1])+' مرة',s:'دي أكتر إيموجي اتبعتت بينكم'});
+    try{const vc={};let vt=0;allMessages.forEach(m=>{if(window.__voice&&window.__voice.isVoice(m)){vc[m.sender]=(vc[m.sender]||0)+1;vt++;}});
+      if(vt>0){const vn=Object.keys(vc).sort((x,y)=>vc[y]-vc[x]);cards.push({bg:g(),e:'🎙️',t:'ملك الريكوردات',big:esc(vn[0]),s:'بعت '+fmtN(vc[vn[0]])+' رسالة صوتية من '+fmtN(vt),rows:vn.slice(0,5).map(n=>[n,fmtN(vc[n])+' ريكورد'])});}}catch(e){}
     cards.push({bg:g(),e:'✨',t:'الخلاصة',big:'شات حلو!',s:'اتعمل بـ عارض شات واتساب<br>كل حاجة بتتحسب في جهازك ومفيش حاجة بتترفع لأي سيرفر'});
     return cards;
   }
@@ -3972,6 +3974,41 @@ function hydrateFromEmbedded(data){
   const obs=new MutationObserver(()=>{if($('voiceCsv')&&!$('trBox'))ui();});
   const vb=$('voiceBody');if(vb)obs.observe(vb,{childList:true});
   window.__tr={ui,transcribeOne,T};
+})();
+
+/* ===== increment 20: sequential voice-note player ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  let au=null,idx=0,list=[],rate=1,playing=false;
+  function ui(){
+    const body=$('voiceBody');if(!body||$('vpBox'))return;
+    list=((window.__voice&&window.__voice.last)||[]).filter(v=>v.key&&mediaMap[v.key]).sort((a,b)=>a.m.timestamp-b.m.timestamp);
+    if(!list.length)return;
+    const box=document.createElement('div');box.id='vpBox';box.style.cssText='margin:12px 0;padding:10px;border-radius:12px;background:#00a88422';
+    box.innerHTML='<b>▶ تشغيل الريكوردات ورا بعض</b><div id="vpNow" style="font-size:13px;margin:6px 0">'+list.length+' ريكورد جاهزين</div><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="ex-b" id="vpPrev">⏮</button><button class="ex-b p" id="vpPlay">▶ شغّل</button><button class="ex-b" id="vpNext">⏭</button><select id="vpRate" class="ex-b"><option value="1">1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select><select id="vpWho" class="ex-b"><option value="">الكل</option>'+[...new Set(list.map(v=>v.m.sender))].map(s=>'<option>'+esc(s)+'</option>').join('')+'</select><button class="ex-b" id="vpGo">روح للرسالة</button></div>';
+    const first=body.querySelector('div');body.insertBefore(box,first?first.nextSibling:null);
+    $('vpPlay').onclick=()=>playing?pause():start(idx);
+    $('vpPrev').onclick=()=>start(Math.max(0,idx-1));
+    $('vpNext').onclick=()=>start(Math.min(cur().length-1,idx+1));
+    $('vpRate').onchange=e=>{rate=+e.target.value;if(au)au.playbackRate=rate;};
+    $('vpWho').onchange=()=>{idx=0;pause();now(0);};
+    $('vpGo').onclick=()=>{const v=cur()[idx];if(!v)return;$('voiceOverlay').style.display='none';pause();if(typeof jumpToMessage==='function')jumpToMessage(v.m.id);};
+    $('voiceClose').addEventListener('click',pause);
+  }
+  const cur=()=>{const w=$('vpWho')?$('vpWho').value:'';return w?list.filter(v=>v.m.sender===w):list;};
+  function now(state){const v=cur()[idx];const e=$('vpNow');if(!e)return;e.textContent=v?((state?'🔊 ':'')+(idx+1)+' / '+cur().length+' — '+v.m.sender+' • '+v.m.date+' '+v.m.time+(v.dur!=null?' • '+Math.round(v.dur)+' ث':'')):'';}
+  function pause(){playing=false;if(au)au.pause();const p=$('vpPlay');if(p)p.textContent='▶ شغّل';}
+  function start(i){
+    const L=cur();if(!L.length)return;idx=i;if(au){au.onended=null;au.pause();}
+    au=new Audio(mediaMap[L[idx].key]);au.playbackRate=rate;playing=true;$('vpPlay').textContent='⏸ إيقاف';now(1);
+    au.onended=()=>{if(idx<cur().length-1)start(idx+1);else{pause();now(0);}};
+    au.onerror=()=>{if(idx<cur().length-1)start(idx+1);else pause();};
+    au.play().catch(()=>{pause();});
+  }
+  const obs=new MutationObserver(()=>{if($('voiceCsv')&&!$('vpBox'))ui();});
+  const vb=$('voiceBody');if(vb)obs.observe(vb,{childList:true});
+  window.__vplayer={ui,start,get idx(){return idx;}};
 })();
 
 if(window.__EMBEDDED_CHAT__){

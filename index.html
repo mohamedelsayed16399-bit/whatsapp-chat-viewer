@@ -4053,7 +4053,7 @@ function hydrateFromEmbedded(data){
   const keyOfSrc=src=>{for(const k in mediaMap){if(mediaMap[k]===src)return k;}return null;};
   let busy=false,stop=false;
   async function one(key,model){
-    const it={key};const t=await window.__tr.transcribeOne(it,model||'Xenova/whisper-base','arabic',()=>{});
+    const it={key};const pm=localStorage.getItem('wa-viewer-tr-model')||'Xenova/whisper-base',pl=localStorage.getItem('wa-viewer-tr-lang')||'arabic';const t=await window.__tr.transcribeOne(it,model||pm,pl,()=>{});
     T()[key]=t||'(مفيش كلام واضح)';sv();return T()[key];
   }
   function decorate(){
@@ -4063,7 +4063,9 @@ function hydrateFromEmbedded(data){
       const key=keyOfSrc(au.getAttribute('src'));if(!key)return;w.dataset.trd='1';
       const d=document.createElement('div');d.className='tr-inline';d.style.cssText='font-size:12.5px;margin-top:4px;line-height:1.6;color:#333;background:#00a88418;border-radius:8px;padding:4px 8px';
       const paint=()=>{const t=T()[key];
-        if(t){d.innerHTML='📝 '+esc(t);d.style.display='block';}
+        if(t){d.innerHTML='📝 <span class="tr-t">'+esc(t)+'</span> <button type="button" class="tr-ed" title="عدّل النص" style="border:0;background:none;cursor:pointer;padding:0 4px">✏️</button>';d.style.display='block';
+          d.querySelector('.tr-ed').onclick=()=>{d.innerHTML='<textarea style="width:100%;min-height:60px;font:inherit;border-radius:8px;border:1px solid #8886;padding:4px"></textarea><div><button type="button" class="tr-sv" style="margin:4px 2px">💾 احفظ</button><button type="button" class="tr-cx">إلغاء</button></div>';const ta=d.querySelector('textarea');ta.value=t;
+            d.querySelector('.tr-sv').onclick=()=>{T()[key]=ta.value.trim()||'(مفيش كلام واضح)';sv();paint();};d.querySelector('.tr-cx').onclick=paint;};}
         else{d.innerHTML='<button type="button" style="border:0;background:none;color:#00a884;font-weight:600;cursor:pointer;padding:0">📝 فرّغ الريكورد ده</button>';
           d.firstChild.onclick=async()=>{if(busy){d.textContent='استنى، فيه تفريغ شغال...';return;}busy=true;d.textContent='⏳ بيفرّغ (أول مرة بينزّل النموذج)...';
             try{await one(key);}catch(e){d.textContent='⚠️ فشل: '+(e&&e.message||e);busy=false;return;}busy=false;paint();};}};
@@ -4080,11 +4082,20 @@ function hydrateFromEmbedded(data){
     if(!vs.length||!window.__tr)return;
     const box=document.createElement('div');box.id='tr2Box';box.style.cssText='margin:14px 0;padding:10px;border-radius:12px;background:#7c4dff1a';
     box.innerHTML='<b>🧾 التفريغ الكامل والبحث والكلمات</b><div id="tr2Stat" style="font-size:13px;margin:6px 0"></div>'+
-     '<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="ex-b" id="tr2All" type="button">⚡ فرّغ الكل</button><button class="ex-b" id="tr2Stop" type="button">⏹ وقف</button><button class="ex-b" id="tr2Words" type="button">🔤 أكتر كلمات</button><button class="ex-b" id="tr2Exp" type="button">⬇️ الشات + التفريغ (TXT)</button></div>'+
+     '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px"><select id="tr2Model" class="ex-b"><option value="Xenova/whisper-tiny">tiny (سريع، ضعيف)</option><option value="Xenova/whisper-base">base (متوسط)</option><option value="Xenova/whisper-small">small (أدق، تقيل ~250MB)</option></select><select id="tr2Lang" class="ex-b"><option value="arabic">عربي</option><option value="auto">تلقائي</option><option value="english">English</option></select></div>'+
+     '<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="ex-b" id="tr2Read" type="button">📖 اقرا الريكوردات كنص</button><button class="ex-b" id="tr2All" type="button">⚡ فرّغ الكل</button><button class="ex-b" id="tr2Stop" type="button">⏹ وقف</button><button class="ex-b" id="tr2Words" type="button">🔤 أكتر كلمات</button><button class="ex-b" id="tr2Exp" type="button">⬇️ الشات + التفريغ (TXT)</button></div>'+
      '<div id="tr2Prog" style="font-size:12px;margin:6px 0"></div><div id="tr2Out"></div>';
     body.insertBefore(box,body.children[1]||null);
     const stat=()=>{ld();const n=vs.filter(v=>T()[v.key]).length;$('tr2Stat').textContent='اتفرّغ '+n+' من '+vs.length+' ريكورد. التفريغ بيظهر تحت كل ريكورد في الشات وبيدخل في البحث.';};
     stat();
+    $('tr2Model').value=localStorage.getItem('wa-viewer-tr-model')||'Xenova/whisper-base';$('tr2Lang').value=localStorage.getItem('wa-viewer-tr-lang')||'arabic';
+    $('tr2Model').onchange=e=>localStorage.setItem('wa-viewer-tr-model',e.target.value);$('tr2Lang').onchange=e=>localStorage.setItem('wa-viewer-tr-lang',e.target.value);
+    $('tr2Read').onclick=()=>{ld();const rows=vs.slice().sort((a,b)=>a.m.timestamp-b.m.timestamp).filter(v=>T()[v.key]);
+      if(!rows.length){$('tr2Out').textContent='لسه مفيش تفريغ.';return;}
+      $('tr2Out').innerHTML='<input id="tr2Q" placeholder="🔎 دور في النص" style="width:100%;padding:6px;border:1px solid #8886;border-radius:10px;margin:6px 0"><div id="tr2R"></div><button class="ex-b" id="tr2Copy" type="button">📋 انسخ الكل</button>';
+      const draw=()=>{const q=($('tr2Q').value||'').trim().toLowerCase();$('tr2R').innerHTML=rows.filter(v=>!q||T()[v.key].toLowerCase().includes(q)).map(v=>'<div class="ex-q" style="padding:8px;margin:6px 0;font-size:13px;line-height:1.7"><small>'+esc(v.m.sender)+' • '+esc(v.m.date+' '+v.m.time)+'</small><br>'+esc(T()[v.key])+'</div>').join('')||'مفيش نتيجة';};
+      draw();$('tr2Q').oninput=draw;
+      $('tr2Copy').onclick=()=>{const tx=rows.map(v=>'['+v.m.date+' '+v.m.time+'] '+v.m.sender+': '+T()[v.key]).join('\n');try{navigator.clipboard.writeText(tx);$('tr2Copy').textContent='✅ اتنسخ';}catch(e){$('tr2Copy').textContent='⚠️ المتصفح منع النسخ';}};};
     $('tr2All').onclick=async()=>{if(busy)return;busy=true;stop=false;const todo=vs.filter(v=>!T()[v.key]);const t0=Date.now();let done=0;
       for(const v of todo){if(stop)break;$('tr2Prog').textContent='⏳ '+(done+1)+' / '+todo.length+(done?' • باقي حوالي '+Math.round((Date.now()-t0)/done*(todo.length-done)/60000)+' دقيقة':' (أول واحد بينزّل النموذج)');
         try{await one(v.key);}catch(e){$('tr2Prog').textContent='⚠️ وقف بسبب: '+(e&&e.message||e);break;}done++;stat();}
@@ -4106,4 +4117,4 @@ if(window.__EMBEDDED_CHAT__){
 }
 </script>
 </body>
-      </html>
+       </html>

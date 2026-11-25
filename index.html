@@ -3900,6 +3900,9 @@ function hydrateFromEmbedded(data){
   const $=id=>document.getElementById(id);
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const T=window.__transcripts=window.__transcripts||{};
+  const trKey=()=>'wa-viewer-tr-'+(typeof storageKey!=='undefined'?storageKey:'x');
+  function trLoad(){try{Object.assign(T,JSON.parse(localStorage.getItem(trKey())||'{}'));}catch(e){}}
+  function trSave(){try{localStorage.setItem(trKey(),JSON.stringify(Object.fromEntries(Object.entries(T).filter(([k,v])=>v))));}catch(e){}}
   let asr=null,asrModel=null,loading=null,busy=false;
   const LIB='https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
   async function getAsr(model,onProg){
@@ -3932,12 +3935,13 @@ function hydrateFromEmbedded(data){
   }
   function ui(){
     const body=$('voiceBody');if(!body||$('trBox'))return;
+    trLoad();
     const vs=(window.__voice&&window.__voice.last)||[];
     const items=vs.filter(v=>v.key&&mediaMap[v.key]);
     const box=document.createElement('div');box.id='trBox';box.style.cssText='margin-top:16px;border-top:1px solid #8884;padding-top:10px';
     if(!items.length){box.innerHTML='<b>📝 تفريغ الصوت لنص</b><div style="font-size:12px;opacity:.75;margin-top:4px">محتاج تصدير واتساب <b>مع الوسائط (zip)</b> عشان الملفات الصوتية تبقى موجودة.</div>';body.appendChild(box);return;}
     box.innerHTML='<b>📝 تفريغ الصوت لنص (تجريبي)</b><div style="font-size:12px;opacity:.8;line-height:1.7;margin:4px 0">بيشتغل جوه المتصفح بنموذج Whisper المجاني، والصوت <b>مبيتبعتش لأي سيرفر</b>. أول مرة بينزّل النموذج (tiny ≈ 40 ميجا، base ≈ 80 ميجا) فيُفضّل واي فاي. الدقة بالعربي المصري متوسطة، وtiny أضعف من base. بيشتغل على كروم/إيدج، وممكن يبقى بطيء على موبايل ضعيف.</div>'+
-      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0"><select id="trModel" class="ex-b"><option value="Xenova/whisper-tiny">tiny (أسرع)</option><option value="Xenova/whisper-base" selected>base (أدق)</option></select><select id="trLang" class="ex-b"><option value="arabic" selected>عربي</option><option value="english">English</option><option value="auto">تلقائي</option></select><button class="ex-b p" id="trAll">فرّغ أول 10</button></div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0"><select id="trModel" class="ex-b"><option value="Xenova/whisper-tiny">tiny (أسرع)</option><option value="Xenova/whisper-base" selected>base (أدق)</option></select><select id="trLang" class="ex-b"><option value="arabic" selected>عربي</option><option value="english">English</option><option value="auto">تلقائي</option></select><button class="ex-b p" id="trAll">فرّغ أول 10</button><button class="ex-b" id="trDl">💾 تنزيل التفريغ</button></div>'+
       '<div id="trProg" style="font-size:12px;margin:4px 0"></div><div style="display:flex;gap:6px;margin:6px 0"><input id="trSearch" placeholder="🔎 دور جوه التفريغ" style="flex:1;padding:6px;border:1px solid #8886;border-radius:10px"></div><div id="trList"></div>';
     body.appendChild(box);
     const list=$('trList');
@@ -3955,12 +3959,15 @@ function hydrateFromEmbedded(data){
           prog.textContent='⏳ بنفرّغ '+(k+1)+' / '+arr.length+'...';
           try{T[it.key]=await transcribeOne(it,model,lang,onProg)||'(مفيش كلام واضح)';}
           catch(e){console.error(e);T[it.key]='';prog.textContent='⚠️ فشل: '+(e&&e.message||e);if(/fetch|network|import|load/i.test(String(e&&e.message)))break;}
-          draw();
+          trSave();draw();
         }
         if(!/فشل/.test(prog.textContent))prog.textContent='✅ خلصنا';
       }finally{busy=false;}
     }
     $('trAll').onclick=()=>run(items.slice(0,10));
+    $('trDl').onclick=()=>{const rows=items.filter(v=>T[v.key]).map(v=>'['+v.m.date+' '+v.m.time+'] '+v.m.sender+':\n'+T[v.key]+'\n');
+      if(!rows.length){prog.textContent='مفيش تفريغ لسه.';return;}
+      const b=new Blob(['\ufeff'+rows.join('\n')],{type:'text/plain;charset=utf-8'});const u=URL.createObjectURL(b),l=document.createElement('a');l.href=u;l.download='voice-transcripts.txt';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);};
   }
   const obs=new MutationObserver(()=>{if($('voiceCsv')&&!$('trBox'))ui();});
   const vb=$('voiceBody');if(vb)obs.observe(vb,{childList:true});

@@ -3519,6 +3519,12 @@ function hydrateFromEmbedded(data){
     const grad=['#075e54,#128c7e','#6a11cb,#2575fc','#f7971e,#ff512f','#11998e,#38ef7d','#ee0979,#ff6a00','#1e3c72,#2a5298','#8e2de2,#4a00e0','#141e30,#243b55','#cb2d3e,#ef473a'];
     let gi=0; const g=()=>'linear-gradient(160deg,'+grad[gi++%grad.length]+')';
     cards.push({bg:g(),e:'🎁',t:'ملخص محادثتكم',big:fmtN(a.n),s:'رسالة في '+fmtN(a.spanDays)+' يوم<br>من '+dstr(a.first)+'<br>لحد '+dstr(a.last)});
+    const allN=Object.keys(a.per).sort((x,y)=>a.per[y].msgs-a.per[x].msgs);
+    if(allN.length>2){
+      cards.push({bg:g(),e:'👥',t:'ترتيب الجروب (حسب الرسايل)',big:esc(allN[0]),s:allN.length+' مشارك، والأول كتب '+Math.round(a.per[allN[0]].msgs/a.n*100)+'% من الكلام',rows:allN.slice(0,6).map(n=>[n,fmtN(a.per[n].msgs)])});
+      const lf=allN.slice().sort((x,y)=>a.per[y].laugh-a.per[x].laugh)[0],ni=allN.slice().sort((x,y)=>a.per[y].late-a.per[x].late)[0],st=allN.slice().sort((x,y)=>a.per[y].starts-a.per[x].starts)[0];
+      cards.push({bg:g(),e:'🎖️',t:'جوايز الجروب',big:'',s:'',rows:[['😂 ملك الضحك: '+lf,fmtN(a.per[lf].laugh)],['🦉 بومة الجروب: '+ni,fmtN(a.per[ni].late)+' رسالة بعد 12'],['🚀 بيفتح الكلام: '+st,fmtN(a.per[st].starts)+' مرة']]});
+    }
     if(B){
       const tot=pa.msgs+pb.msgs; const top=pa.msgs>=pb.msgs?A:B; const pct=Math.round(Math.max(pa.msgs,pb.msgs)/tot*100);
       cards.push({bg:g(),e:'🗣️',t:'مين بيرغي أكتر؟',big:esc(top),s:'كتب '+pct+'% من الرسايل',rows:[[A,fmtN(pa.msgs)+' رسالة'],[B,fmtN(pb.msgs)+' رسالة'],[A+' كلمات',fmtN(pa.words)],[B+' كلمات',fmtN(pb.words)]]});
@@ -3574,10 +3580,11 @@ function hydrateFromEmbedded(data){
       '<div class="wr-emoji">'+esc(c.e)+'</div><div class="wr-t">'+c.t+'</div>'+(c.big?'<div class="wr-big">'+c.big+'</div>':'')+
       (c.cloud?'<div class="wr-cloud">'+c.cloud.map(([w,s],i)=>'<span style="font-size:'+s+'px;font-weight:700;opacity:'+(0.65+0.35*s/38)+'">'+esc(w)+'</span>').join('')+'</div>':'')+
       (c.s?'<div class="wr-s">'+c.s+'</div>':'')+(c.rows?'<div class="wr-rows">'+c.rows.map(r=>'<div class="wr-row"><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></div>').join('')+'</div>':'')+
-      '<div class="wr-nav"><button id="wrPrev">▶ السابق</button><button id="wrSave">📥 صورة</button><button id="wrNext">التالي ◀</button></div>';
+      '<div class="wr-nav"><button id="wrPrev">▶ السابق</button><button id="wrSave">📥 صورة</button><button id="wrAll">📦 كل الصور</button><button id="wrNext">التالي ◀</button></div>';
     $('wrClose').onclick=()=>{ov.style.display='none';};
     $('wrPrev').onclick=()=>go(-1);$('wrNext').onclick=()=>go(1);
     el.querySelectorAll('.wr-tap').forEach(t=>t.onclick=()=>go(+t.dataset.d));
+    $('wrAll').onclick=async()=>{for(let i=0;i<cards.length;i++){const cv=cardToPng(cards[i],i,cards.length);await new Promise(r=>cv.toBlob(b=>{const u=URL.createObjectURL(b),l=document.createElement('a');l.href=u;l.download='wrapped-'+(i+1)+'.png';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),3000);setTimeout(r,350);}));}};
     $('wrSave').onclick=()=>{const cv=cardToPng(c,ci,cards.length);cv.toBlob(b=>{const u=URL.createObjectURL(b),l=document.createElement('a');l.href=u;l.download='wrapped-'+(ci+1)+'.png';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);});};
   }
   function go(d){ci=Math.max(0,Math.min(cards.length-1,ci+d));show();}

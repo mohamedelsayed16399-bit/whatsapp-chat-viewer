@@ -3895,6 +3895,78 @@ function hydrateFromEmbedded(data){
   window.__voice={open,isVoice,get last(){return last;}};
 })();
 
+/* ===== round 18: in-browser voice transcription (Whisper via transformers.js, optional, downloads a model) ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const T=window.__transcripts=window.__transcripts||{};
+  let asr=null,asrModel=null,loading=null,busy=false;
+  const LIB='https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
+  async function getAsr(model,onProg){
+    if(asr&&asrModel===model)return asr;
+    if(loading)return loading;
+    loading=(async()=>{
+      const mod=await import(LIB+'/+esm');
+      mod.env.allowLocalModels=false;
+      asr=await mod.pipeline('automatic-speech-recognition',model,{progress_callback:onProg});
+      asrModel=model;return asr;
+    })();
+    try{return await loading;}finally{loading=null;}
+  }
+  async function decode(url){
+    const buf=await (await fetch(url)).arrayBuffer();
+    const AC=window.AudioContext||window.webkitAudioContext;
+    const ctx=new AC({sampleRate:16000});
+    try{
+      const ab=await new Promise((res,rej)=>{const p=ctx.decodeAudioData(buf,res,rej);if(p&&p.catch)p.catch(rej);});
+      const ch=ab.getChannelData(0);return new Float32Array(ch);
+    }finally{try{ctx.close();}catch(e){}}
+  }
+  async function transcribeOne(item,model,lang,onProg){
+    const a=await getAsr(model,onProg);
+    const audio=await decode(mediaMap[item.key]);
+    const opts={chunk_length_s:30,stride_length_s:5,task:'transcribe'};
+    if(lang!=='auto')opts.language=lang;
+    const out=await a(audio,opts);
+    return (out&&out.text||'').trim();
+  }
+  function ui(){
+    const body=$('voiceBody');if(!body||$('trBox'))return;
+    const vs=(window.__voice&&window.__voice.last)||[];
+    const items=vs.filter(v=>v.key&&mediaMap[v.key]);
+    const box=document.createElement('div');box.id='trBox';box.style.cssText='margin-top:16px;border-top:1px solid #8884;padding-top:10px';
+    if(!items.length){box.innerHTML='<b>📝 تفريغ الصوت لنص</b><div style="font-size:12px;opacity:.75;margin-top:4px">محتاج تصدير واتساب <b>مع الوسائط (zip)</b> عشان الملفات الصوتية تبقى موجودة.</div>';body.appendChild(box);return;}
+    box.innerHTML='<b>📝 تفريغ الصوت لنص (تجريبي)</b><div style="font-size:12px;opacity:.8;line-height:1.7;margin:4px 0">بيشتغل جوه المتصفح بنموذج Whisper المجاني، والصوت <b>مبيتبعتش لأي سيرفر</b>. أول مرة بينزّل النموذج (tiny ≈ 40 ميجا، base ≈ 80 ميجا) فيُفضّل واي فاي. الدقة بالعربي المصري متوسطة، وtiny أضعف من base. بيشتغل على كروم/إيدج، وممكن يبقى بطيء على موبايل ضعيف.</div>'+
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:6px 0"><select id="trModel" class="ex-b"><option value="Xenova/whisper-tiny">tiny (أسرع)</option><option value="Xenova/whisper-base" selected>base (أدق)</option></select><select id="trLang" class="ex-b"><option value="arabic" selected>عربي</option><option value="english">English</option><option value="auto">تلقائي</option></select><button class="ex-b p" id="trAll">فرّغ أول 10</button></div>'+
+      '<div id="trProg" style="font-size:12px;margin:4px 0"></div><div style="display:flex;gap:6px;margin:6px 0"><input id="trSearch" placeholder="🔎 دور جوه التفريغ" style="flex:1;padding:6px;border:1px solid #8886;border-radius:10px"></div><div id="trList"></div>';
+    body.appendChild(box);
+    const list=$('trList');
+    const draw=()=>{const q=($('trSearch').value||'').trim().toLowerCase();
+      list.innerHTML=items.slice(0,60).filter(v=>!q||(T[v.key]||'').toLowerCase().includes(q)).map(v=>{const i=items.indexOf(v);return '<div class="ex-q" style="padding:8px;margin:6px 0;font-size:13px">'+esc(v.m.sender)+' • '+esc(v.m.date+' '+v.m.time)+(v.dur!=null?' • '+Math.round(v.dur)+' ث':'')+' <button class="ex-b" data-i="'+i+'">📝 فرّغ</button><div id="trT'+i+'" style="margin-top:6px;white-space:pre-wrap">'+(T[v.key]?esc(T[v.key]):'')+'</div></div>';}).join('')||'<div style="font-size:12px;opacity:.7">مفيش نتايج.</div>';
+      list.querySelectorAll('button[data-i]').forEach(b=>b.onclick=()=>run([items[+b.dataset.i]]));};
+    draw();$('trSearch').oninput=draw;
+    const prog=$('trProg');
+    const onProg=p=>{if(p&&p.status==='progress'&&p.file){prog.textContent='⬇️ تنزيل النموذج: '+(p.file.split('/').pop())+' '+Math.round(p.progress||0)+'%';}else if(p&&p.status==='ready'){prog.textContent='✅ النموذج جاهز';}};
+    async function run(arr){
+      if(busy)return;busy=true;const model=$('trModel').value,lang=$('trLang').value;
+      try{
+        for(let k=0;k<arr.length;k++){
+          const it=arr[k];if(T[it.key])continue;
+          prog.textContent='⏳ بنفرّغ '+(k+1)+' / '+arr.length+'...';
+          try{T[it.key]=await transcribeOne(it,model,lang,onProg)||'(مفيش كلام واضح)';}
+          catch(e){console.error(e);T[it.key]='';prog.textContent='⚠️ فشل: '+(e&&e.message||e);if(/fetch|network|import|load/i.test(String(e&&e.message)))break;}
+          draw();
+        }
+        if(!/فشل/.test(prog.textContent))prog.textContent='✅ خلصنا';
+      }finally{busy=false;}
+    }
+    $('trAll').onclick=()=>run(items.slice(0,10));
+  }
+  const obs=new MutationObserver(()=>{if($('voiceCsv')&&!$('trBox'))ui();});
+  const vb=$('voiceBody');if(vb)obs.observe(vb,{childList:true});
+  window.__tr={ui,transcribeOne,T};
+})();
+
 if(window.__EMBEDDED_CHAT__){
   hydrateFromEmbedded(window.__EMBEDDED_CHAT__);
 }

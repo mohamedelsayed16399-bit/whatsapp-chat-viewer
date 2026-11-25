@@ -3431,6 +3431,303 @@ function hydrateFromEmbedded(data){
   ]);
 })();
 
+/* ===== round 12: Wrapped story + on-this-day + anonymized export ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const fmtN=n=>Number(n).toLocaleString('en-US');
+  const DAY=864e5;
+  const STOP=new Set('في من على الى إلى عن مع ده دي دا ان أن انا أنا انت أنت هو هي ايه إيه لا لأ ايوه اه آه يا ما مش كل بس لو كده كدة اللي ال و او أو the a to of and is it you i'.split(' '));
+  const css=document.createElement('style');
+  css.textContent=`
+  .wr-ov{position:fixed;inset:0;z-index:50;background:rgba(0,0,0,.82);display:none;align-items:center;justify-content:center;padding:12px}
+  .wr-card{width:100%;max-width:420px;height:min(88vh,720px);border-radius:22px;color:#fff;position:relative;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:28px 22px;overflow:hidden;direction:rtl;transition:background .4s}
+  .wr-bars{position:absolute;top:10px;left:14px;right:14px;display:flex;gap:4px}
+  .wr-bars i{flex:1;height:3px;border-radius:3px;background:rgba(255,255,255,.3)}
+  .wr-bars i.on{background:#fff}
+  .wr-emoji{font-size:64px;margin-bottom:8px}
+  .wr-t{font-size:15px;opacity:.9;margin-bottom:10px}
+  .wr-big{font-size:46px;font-weight:800;line-height:1.15;margin:6px 0;word-break:break-word}
+  .wr-s{font-size:15px;opacity:.92;line-height:1.7;max-width:330px}
+  .wr-rows{width:100%;max-width:330px;margin-top:12px;text-align:right}
+  .wr-row{display:flex;justify-content:space-between;gap:10px;padding:7px 12px;background:rgba(255,255,255,.14);border-radius:10px;margin-bottom:6px;font-size:14px}
+  .wr-cloud{display:flex;flex-wrap:wrap;gap:6px 10px;justify-content:center;max-width:340px;margin-top:10px;line-height:1.2}
+  .wr-nav{position:absolute;bottom:14px;left:0;right:0;display:flex;justify-content:center;gap:8px}
+  .wr-nav button,.wr-x{border:0;border-radius:20px;padding:8px 14px;font-size:13px;background:rgba(255,255,255,.22);color:#fff;cursor:pointer}
+  .wr-x{position:absolute;top:22px;left:14px;padding:4px 10px}
+  .wr-tap{position:absolute;top:40px;bottom:60px;width:35%}
+  .otd-item{background:#fff;border-radius:10px;padding:8px 12px;margin:6px 0;font-size:14px;color:#111b21;text-align:right}
+  body.dark .otd-item{background:#202c33;color:#e9edef}
+  .otd-item small{color:#667781;display:block}
+  `;
+  document.head.appendChild(css);
+
+  /* ---- analysis ---- */
+  function analyze(){
+    const senders=(allMessages.senders||[]).slice(0,2);
+    const real=allMessages.filter(m=>!m.system&&m.sender&&m.timestamp&&!isNaN(m.timestamp)).sort((a,b)=>a.timestamp-b.timestamp);
+    const out={n:real.length,senders,per:{}};
+    if(real.length<2) return out;
+    allMessages.senders.forEach(s=>out.per[s]={msgs:0,words:0,hourSum:0,sorry:0,love:0,laugh:0,starts:0,ends:0,q:0,media:0,cnt:{},emo:{},replies:[],late:0,long:0});
+    const days={},dayList=new Set();let prev=null;
+    const LOVE=/بحبك|حبيبي|حبيبتي|وحشتني|وحشتيني|❤|😍|😘|love you|miss you/gi;
+    const SORRY=/آسف|اسف|آسفة|اسفة|معلش|سامحني|سامحيني|sorry/gi;
+    const LAUGH=/ه{3,}|😂|🤣|haha|lol/gi;
+    const EMO=/\p{Extended_Pictographic}/gu;
+    real.forEach(m=>{
+      const p=out.per[m.sender]; if(!p) return;
+      const c=m.content||'';
+      if(/^<?(الوسائط|media|صورة|image|‎?image|sticker|‎?audio|‎?video)/i.test(c.trim())||/omitted|تم استبعاد/i.test(c)){p.media++;}
+      p.msgs++; p.hourSum+=m.timestamp.getHours();
+      const h=m.timestamp.getHours(); if(h>=0&&h<5) p.late++;
+      const words=c.split(/[\s\n]+/).filter(Boolean); p.words+=words.length; if(words.length>=40)p.long++;
+      if(c.includes('?')||c.includes('؟')) p.q++;
+      p.love+=(c.match(LOVE)||[]).length; p.sorry+=(c.match(SORRY)||[]).length; p.laugh+=(c.match(LAUGH)||[]).length;
+      (c.match(EMO)||[]).forEach(e=>{p.emo[e]=(p.emo[e]||0)+1;});
+      words.forEach(w=>{w=w.replace(/[^\p{L}\p{N}]/gu,'').toLowerCase(); if(w.length>2&&!STOP.has(w)&&!/^\d+$/.test(w)&&!/^https?/.test(w)) p.cnt[w]=(p.cnt[w]||0)+1;});
+      const dk=m.timestamp.getFullYear()+'-'+m.timestamp.getMonth()+'-'+m.timestamp.getDate();
+      days[dk]=(days[dk]||0)+1; dayList.add(Math.floor((m.timestamp.getTime()-m.timestamp.getTimezoneOffset()*6e4)/DAY));
+      if(prev){
+        const gap=m.timestamp-prev.timestamp;
+        if(gap>6*3600e3){ p.starts++; out.per[prev.sender]&&out.per[prev.sender].ends++; if(gap>(out.maxGap?out.maxGap.ms:0)) out.maxGap={ms:gap,from:prev.timestamp,to:m.timestamp}; }
+        else if(prev.sender!==m.sender && gap<2*3600e3) p.replies.push(gap);
+      } else p.starts++;
+      prev=m;
+    });
+    if(prev&&out.per[prev.sender]) out.per[prev.sender].ends++;
+    const dkeys=Object.keys(days); out.activeDays=dkeys.length;
+    out.busiest=dkeys.sort((a,b)=>days[b]-days[a])[0]; out.busiestN=days[out.busiest];
+    const bp=out.busiest.split('-'); out.busiestDate=new Date(+bp[0],+bp[1],+bp[2]);
+    const arr=[...dayList].sort((a,b)=>a-b); let best=1,cur=1;
+    for(let i=1;i<arr.length;i++){cur=arr[i]===arr[i-1]+1?cur+1:1; if(cur>best)best=cur;} out.streak=best;
+    out.first=real[0].timestamp; out.last=real[real.length-1].timestamp;
+    out.spanDays=Math.max(1,Math.round((out.last-out.first)/DAY));
+    Object.values(out.per).forEach(p=>{
+      p.avgHour=p.msgs?p.hourSum/p.msgs:0;
+      const r=p.replies.slice().sort((a,b)=>a-b); p.medReply=r.length?r[r.length>>1]:null;
+      p.top=Object.entries(p.cnt).sort((a,b)=>b[1]-a[1]).slice(0,6);
+      p.topEmo=Object.entries(p.emo).sort((a,b)=>b[1]-a[1])[0];
+    });
+    return out;
+  }
+  function dur(ms){const m=Math.round(ms/6e4); if(m<1)return 'أقل من دقيقة'; if(m<60)return m+' دقيقة'; const h=Math.round(m/60); if(h<48)return h+' ساعة'; return Math.round(h/24)+' يوم';}
+  const dstr=d=>d.toLocaleDateString('ar-EG',{day:'numeric',month:'long',year:'numeric'});
+  const hlab=h=>{h=Math.round(h)%24; return (h%12||12)+(h<12?' ص':' م');};
+
+  function buildCards(a){
+    const [A,B]=a.senders; const pa=a.per[A],pb=a.per[B]; const cards=[];
+    const grad=['#075e54,#128c7e','#6a11cb,#2575fc','#f7971e,#ff512f','#11998e,#38ef7d','#ee0979,#ff6a00','#1e3c72,#2a5298','#8e2de2,#4a00e0','#141e30,#243b55','#cb2d3e,#ef473a'];
+    let gi=0; const g=()=>'linear-gradient(160deg,'+grad[gi++%grad.length]+')';
+    cards.push({bg:g(),e:'🎁',t:'ملخص محادثتكم',big:fmtN(a.n),s:'رسالة في '+fmtN(a.spanDays)+' يوم<br>من '+dstr(a.first)+'<br>لحد '+dstr(a.last)});
+    if(B){
+      const tot=pa.msgs+pb.msgs; const top=pa.msgs>=pb.msgs?A:B; const pct=Math.round(Math.max(pa.msgs,pb.msgs)/tot*100);
+      cards.push({bg:g(),e:'🗣️',t:'مين بيرغي أكتر؟',big:esc(top),s:'كتب '+pct+'% من الرسايل',rows:[[A,fmtN(pa.msgs)+' رسالة'],[B,fmtN(pb.msgs)+' رسالة'],[A+' كلمات',fmtN(pa.words)],[B+' كلمات',fmtN(pb.words)]]});
+      const st=pa.starts>=pb.starts?A:B;
+      cards.push({bg:g(),e:'🚀',t:'مين بيبدأ الكلام؟',big:esc(st),s:'بيفتح الموضوع بعد ما الشات يسكت 6 ساعات أو أكتر',rows:[[A,fmtN(pa.starts)+' مرة'],[B,fmtN(pb.starts)+' مرة']]});
+      const ow=pa.avgHour>=pb.avgHour?A:B;
+      cards.push({bg:g(),e:'🦉',t:'بومة الليل',big:esc(ow),s:'متوسط وقت رسايله الساعة '+hlab(Math.max(pa.avgHour,pb.avgHour)),rows:[[A+' سهر بعد 12',fmtN(pa.late)],[B+' سهر بعد 12',fmtN(pb.late)]]});
+      const rr=[pa,pb].map((p,i)=>({n:a.senders[i],v:p.medReply})).filter(x=>x.v!=null).sort((x,y)=>x.v-y.v);
+      if(rr.length) cards.push({bg:g(),e:'⚡',t:'أسرع رد',big:esc(rr[0].n),s:'بيرد في النص ده تقريبا في '+dur(rr[0].v),rows:rr.map(x=>[x.n,dur(x.v)])});
+      cards.push({bg:g(),e:'😂',t:'ميتر الضحك والحب',big:fmtN(pa.laugh+pb.laugh),s:'ضحكة (هههه/😂) و'+fmtN(pa.love+pb.love)+' كلمة حب ❤️',rows:[[A+' ضحك',fmtN(pa.laugh)],[B+' ضحك',fmtN(pb.laugh)],[A+' حب',fmtN(pa.love)],[B+' حب',fmtN(pb.love)]]});
+      const sorry=pa.sorry>=pb.sorry?A:B;
+      if(pa.sorry+pb.sorry>0) cards.push({bg:g(),e:'🙏',t:'بطل الاعتذار',big:esc(sorry),s:'قال "معلش/آسف" أكتر',rows:[[A,fmtN(pa.sorry)],[B,fmtN(pb.sorry)]]});
+    } else {
+      cards.push({bg:g(),e:'🦉',t:'وقتك المفضل',big:hlab(pa.avgHour),s:'متوسط وقت رسايلك'});
+    }
+    cards.push({bg:g(),e:'🔥',t:'أطول سلسلة أيام ورا بعض',big:fmtN(a.streak)+' يوم',s:'كلمتوا بعض كل يوم من غير ما يفوت يوم'});
+    cards.push({bg:g(),e:'📅',t:'أكتر يوم زحمة',big:fmtN(a.busiestN),s:'رسالة في يوم واحد<br>'+dstr(a.busiestDate)});
+    if(a.maxGap) cards.push({bg:g(),e:'🧊',t:'أطول سكوت',big:dur(a.maxGap.ms),s:'من '+dstr(a.maxGap.from)+'<br>لحد '+dstr(a.maxGap.to)});
+    const words={}; Object.values(a.per).forEach(p=>Object.entries(p.cnt).forEach(([w,c])=>words[w]=(words[w]||0)+c));
+    const tw=Object.entries(words).sort((x,y)=>y[1]-x[1]).slice(0,24);
+    if(tw.length){const mx=tw[0][1]; cards.push({bg:g(),e:'☁️',t:'سحابة الكلمات',cloud:tw.map(([w,c])=>[w,12+Math.round(c/mx*26)]),s:'أكتر كلمة: «'+esc(tw[0][0])+'» ('+fmtN(tw[0][1])+' مرة)'});}
+    const emo={}; Object.values(a.per).forEach(p=>Object.entries(p.emo).forEach(([e,c])=>emo[e]=(emo[e]||0)+c));
+    const te=Object.entries(emo).sort((x,y)=>y[1]-x[1])[0];
+    if(te) cards.push({bg:g(),e:te[0],t:'إيموجي الشات',big:fmtN(te[1])+' مرة',s:'دي أكتر إيموجي اتبعتت بينكم'});
+    cards.push({bg:g(),e:'✨',t:'الخلاصة',big:'شات حلو!',s:'اتعمل بـ عارض شات واتساب<br>كل حاجة بتتحسب في جهازك ومفيش حاجة بتترفع لأي سيرفر'});
+    return cards;
+  }
+
+  /* ---- canvas export of a card (RTL text) ---- */
+  function cardToPng(card,idx,total){
+    const W=1080,H=1350,c=document.createElement('canvas');c.width=W;c.height=H;const x=c.getContext('2d');
+    const cols=card.bg.match(/#[0-9a-f]{6}/gi);const gr=x.createLinearGradient(0,0,W,H);gr.addColorStop(0,cols[0]);gr.addColorStop(1,cols[1]);x.fillStyle=gr;x.fillRect(0,0,W,H);
+    x.direction='rtl';x.textAlign='center';x.fillStyle='#fff';
+    const plain=s=>String(s||'').replace(/<br>/g,'\n').replace(/&amp;/g,'&').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"');
+    const wrap=(t,y,size,lh,w)=>{x.font='700 '+size+'px Segoe UI, Tahoma, Arial, sans-serif';t.split('\n').forEach(par=>{let line='';par.split(' ').forEach(wd=>{const test=line?line+' '+wd:wd;if(x.measureText(test).width>w&&line){x.fillText(line,W/2,y);y+=lh;line=wd;}else line=test;});x.fillText(line,W/2,y);y+=lh;});return y;};
+    let y=250; x.font='150px Segoe UI Emoji, Apple Color Emoji, sans-serif';x.fillText(card.e,W/2,y);y+=110;
+    x.globalAlpha=.9;y=wrap(plain(card.t),y,48,64,900);x.globalAlpha=1;y+=20;
+    if(card.big){y=wrap(plain(card.big),y+40,card.big.length>9?96:130,150,900);}
+    if(card.cloud){let yy=y+20;const ws=card.cloud.slice();let line=[],lw=0;const lines=[];ws.forEach(([w,s])=>{x.font='700 '+(s*2)+'px Segoe UI, Tahoma, Arial';const wd=x.measureText(w).width+34;if(lw+wd>920&&line.length){lines.push(line);line=[];lw=0;}line.push([w,s,wd]);lw+=wd;});if(line.length)lines.push(line);lines.forEach(l=>{const tw=l.reduce((s,q)=>s+q[2],0);let px=W/2+tw/2;const mxs=Math.max(...l.map(q=>q[1]));l.forEach(([w,s,wd])=>{x.font='700 '+(s*2)+'px Segoe UI, Tahoma, Arial';x.textAlign='right';x.fillText(w,px-17,yy+mxs);px-=wd;});yy+=mxs*2+14;});x.textAlign='center';y=yy;}
+    if(card.s){x.globalAlpha=.92;y=wrap(plain(card.s),y+30,40,58,880);x.globalAlpha=1;}
+    if(card.rows){y+=20;card.rows.forEach(r=>{x.fillStyle='rgba(255,255,255,.16)';x.beginPath();x.roundRect?x.roundRect(120,y,840,84,24):x.rect(120,y,840,84);x.fill();x.fillStyle='#fff';x.font='600 38px Segoe UI, Tahoma, Arial';x.textAlign='right';x.fillText(plain(r[0]),930,y+56);x.textAlign='left';x.fillText(plain(r[1]),150,y+56);x.textAlign='center';y+=100;});}
+    x.globalAlpha=.7;x.font='30px Segoe UI, Tahoma, Arial';x.fillText('عارض شات واتساب  •  '+(idx+1)+'/'+total,W/2,H-60);x.globalAlpha=1;
+    return c;
+  }
+
+  /* ---- Wrapped overlay ---- */
+  const ov=document.createElement('div');ov.className='wr-ov';ov.id='wrOverlay';
+  ov.innerHTML='<div class="wr-card" id="wrCard"></div>';document.body.appendChild(ov);
+  let cards=[],ci=0;
+  function show(){
+    const c=cards[ci],el=$('wrCard');el.style.background=c.bg;
+    el.innerHTML='<div class="wr-bars">'+cards.map((_,i)=>'<i class="'+(i<=ci?'on':'')+'"></i>').join('')+'</div><button class="wr-x" id="wrClose">✕</button><div class="wr-tap" style="left:0" data-d="1"></div><div class="wr-tap" style="right:0" data-d="-1"></div>'+
+      '<div class="wr-emoji">'+esc(c.e)+'</div><div class="wr-t">'+c.t+'</div>'+(c.big?'<div class="wr-big">'+c.big+'</div>':'')+
+      (c.cloud?'<div class="wr-cloud">'+c.cloud.map(([w,s],i)=>'<span style="font-size:'+s+'px;font-weight:700;opacity:'+(0.65+0.35*s/38)+'">'+esc(w)+'</span>').join('')+'</div>':'')+
+      (c.s?'<div class="wr-s">'+c.s+'</div>':'')+(c.rows?'<div class="wr-rows">'+c.rows.map(r=>'<div class="wr-row"><span>'+esc(r[0])+'</span><b>'+esc(r[1])+'</b></div>').join('')+'</div>':'')+
+      '<div class="wr-nav"><button id="wrPrev">▶ السابق</button><button id="wrSave">📥 صورة</button><button id="wrNext">التالي ◀</button></div>';
+    $('wrClose').onclick=()=>{ov.style.display='none';};
+    $('wrPrev').onclick=()=>go(-1);$('wrNext').onclick=()=>go(1);
+    el.querySelectorAll('.wr-tap').forEach(t=>t.onclick=()=>go(+t.dataset.d));
+    $('wrSave').onclick=()=>{const cv=cardToPng(c,ci,cards.length);cv.toBlob(b=>{const u=URL.createObjectURL(b),l=document.createElement('a');l.href=u;l.download='wrapped-'+(ci+1)+'.png';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);});};
+  }
+  function go(d){ci=Math.max(0,Math.min(cards.length-1,ci+d));show();}
+  document.addEventListener('keydown',e=>{if(ov.style.display!=='flex')return;if(e.key==='Escape')ov.style.display='none';if(e.key==='ArrowLeft')go(1);if(e.key==='ArrowRight')go(-1);});
+  function openWrapped(){
+    if(allMessages.length<5){ if(typeof showTempNotice==='function')showTempNotice('افتح شات الأول.'); return; }
+    const a=analyze(); if(a.n<5){ showTempNotice('الشات قصير أوي للملخص.'); return; }
+    window.__wrapped=a;cards=buildCards(a);ci=0;ov.style.display='flex';show();
+  }
+
+  /* ---- on this day ---- */
+  function openOTD(){
+    const now=new Date(),d=now.getDate(),mo=now.getMonth(),y=now.getFullYear();
+    const hits=allMessages.filter(m=>!m.system&&m.timestamp&&m.timestamp.getDate()===d&&m.timestamp.getMonth()===mo&&m.timestamp.getFullYear()<y);
+    let ref=null,head='';
+    if(hits.length){head='في مثل النهاردة ('+d+'/'+(mo+1)+')';ref=hits;}
+    else{ // fallback: same day-of-month in earlier months, nearest
+      const h2=allMessages.filter(m=>!m.system&&m.timestamp&&m.timestamp.getDate()===d&&(m.timestamp.getFullYear()<y||m.timestamp.getMonth()<mo));
+      ref=h2;head='نفس اليوم من الشهور اللي فاتت';
+    }
+    const box=document.createElement('div');box.className='wr-ov';box.style.display='flex';
+    const body=ref.length?ref.slice(0,40).map(m=>'<div class="otd-item"><small>'+esc(m.date+' '+m.time+' • '+m.sender)+'</small>'+esc((m.content||'').slice(0,200))+'</div>').join(''):'<div class="otd-item">مفيش رسايل في اليوم ده قبل كده.</div>';
+    box.innerHTML='<div class="wr-card" style="background:#f0f2f5;color:#111b21;justify-content:flex-start;overflow:auto;height:min(80vh,620px)"><b style="font-size:18px;margin:12px 0 4px">🕰️ '+head+'</b><div style="width:100%;margin-top:6px">'+body+'</div><button class="wr-x" style="background:#00a884;position:static;margin-top:10px" id="otdClose">إغلاق</button></div>';
+    document.body.appendChild(box);box.querySelector('#otdClose').onclick=()=>box.remove();
+    box.addEventListener('click',e=>{if(e.target===box)box.remove();});
+  }
+
+  /* ---- anonymized export ---- */
+  function exportAnon(){
+    const senders=allMessages.senders||[]; if(!senders.length) return;
+    const map={};senders.forEach((s,i)=>map[s]='شخص '+(i+1));
+    const names=senders.slice().sort((a,b)=>b.length-a.length);
+    const lines=allMessages.map(m=>{
+      let c=m.content||'';
+      names.forEach(n=>{if(n.length>1)c=c.split(n).join(map[n]);});
+      c=c.replace(/https?:\/\/\S+/g,'[رابط]').replace(/\+?\d[\d\s\-]{8,}\d/g,'[رقم]').replace(/[\w.+-]+@[\w-]+\.[\w.]+/g,'[إيميل]');
+      return m.date+', '+m.time+' - '+(m.sender?map[m.sender]+': ':'')+c;
+    });
+    const b=new Blob(['\ufeff'+lines.join('\n')],{type:'text/plain;charset=utf-8'});
+    const u=URL.createObjectURL(b),l=document.createElement('a');l.href=u;l.download='chat-anonymized.txt';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);
+    if(typeof showTempNotice==='function')showTempNotice('اتصدّر نسخة من غير الأسماء والأرقام والروابط.');
+  }
+
+  /* ---- buttons ---- */
+  const anchor=$('statsBtn');
+  if(anchor){
+    [['wrappedBtn','🎁 ملخص الشات (Wrapped)',openWrapped],['otdBtn','🕰️ في مثل النهاردة',openOTD],['anonBtn','🕶️ تصدير بدون أسماء',exportAnon]].forEach(([id,label,fn])=>{
+      const b=document.createElement('button');b.id=id;b.textContent=label;b.addEventListener('click',fn);anchor.parentNode.insertBefore(b,anchor);
+    });
+  }
+  window.__wrappedApi={analyze,buildCards,cardToPng};
+})();
+
+/* ===== round 13: explorer (heatmap, monthly timeline, word trend) + who-said-it quiz ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const css=document.createElement('style');
+  css.textContent=`
+  .ex-ov{position:fixed;inset:0;z-index:55;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;padding:10px}
+  .ex-card{width:100%;max-width:480px;max-height:92vh;overflow:auto;background:#fff;color:#111b21;border-radius:16px;padding:14px;direction:rtl}
+  body.dark .ex-card{background:#202c33;color:#e9edef}
+  .ex-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+  .ex-tabs{display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap}
+  .ex-tabs button,.ex-b{border:0;border-radius:16px;padding:6px 12px;background:#e9edef;color:#111b21;font-size:13px;cursor:pointer}
+  .ex-tabs button.on,.ex-b.p{background:#00a884;color:#fff}
+  .ex-hm{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;font-size:9px}
+  .ex-hm i{aspect-ratio:1;border-radius:2px;display:block}
+  .ex-bar{display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;cursor:pointer}
+  .ex-bar span.b{height:12px;background:#00a884;border-radius:3px;display:block}
+  .ex-q{background:#f0f2f5;border-radius:12px;padding:14px;margin:10px 0;font-size:16px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+  body.dark .ex-q{background:#111b21}
+  .ex-opt{display:flex;gap:8px;flex-wrap:wrap}
+  .ex-opt button{flex:1;min-width:110px;padding:10px;border:0;border-radius:12px;background:#d9fdd3;color:#111b21;font-size:15px;cursor:pointer}
+  .ex-opt button.ok{background:#00a884;color:#fff}.ex-opt button.no{background:#ef5350;color:#fff}
+  `;
+  document.head.appendChild(css);
+  const ov=document.createElement('div');ov.className='ex-ov';ov.id='exOverlay';
+  ov.innerHTML='<div class="ex-card"><div class="ex-h"><b>🧭 استكشاف الشات</b><button class="ex-b" id="exClose">✕</button></div><div class="ex-tabs" id="exTabs"></div><div id="exBody"></div></div>';
+  document.body.appendChild(ov);
+  $('exClose').onclick=()=>ov.style.display='none';
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.style.display='none';});
+  const real=()=>allMessages.filter(m=>!m.system&&m.sender&&m.timestamp&&!isNaN(m.timestamp));
+  const MN=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  const WD=['أحد','اتنين','تلات','أربع','خميس','جمعة','سبت'];
+
+  function heat(){
+    const g=Array.from({length:7},()=>Array(24).fill(0));let mx=1;
+    real().forEach(m=>{const v=++g[m.timestamp.getDay()][m.timestamp.getHours()];if(v>mx)mx=v;});
+    let h='<div style="font-size:13px;margin-bottom:6px">أنهي ساعة وأنهي يوم بتتكلموا فيه أكتر (كل ما اللون أغمق = رسايل أكتر)</div><div class="ex-hm"><span></span>'+Array.from({length:24},(_,i)=>'<span style="text-align:center">'+(i%3?'':i)+'</span>').join('');
+    let best=[0,0,0];
+    g.forEach((row,d)=>{h+='<span style="align-self:center">'+WD[d]+'</span>';row.forEach((v,hr)=>{if(v>best[2])best=[d,hr,v];h+='<i title="'+WD[d]+' '+hr+':00 = '+v+'" style="background:rgba(0,168,132,'+(0.08+0.92*v/mx).toFixed(2)+')"></i>';});});
+    h+='</div><div style="margin-top:10px;font-size:14px">🔥 أزحم وقت: <b>'+WD[best[0]]+' الساعة '+best[1]+':00</b> ('+best[2]+' رسالة)</div>';
+    return h;
+  }
+  function timeline(){
+    const mo={},first={};
+    real().forEach(m=>{const k=m.timestamp.getFullYear()*12+m.timestamp.getMonth();mo[k]=(mo[k]||0)+1;if(!first[k])first[k]=m.id;});
+    const ks=Object.keys(mo).map(Number).sort((a,b)=>a-b);if(!ks.length)return '';
+    const mx=Math.max(...ks.map(k=>mo[k]));
+    return '<div style="font-size:13px;margin-bottom:6px">اضغط على أي شهر عشان تروح لأول رسالة فيه</div>'+ks.map(k=>'<div class="ex-bar" data-id="'+first[k]+'"><span style="width:92px;flex:none">'+MN[k%12]+' '+Math.floor(k/12)+'</span><span class="b" style="width:'+Math.max(2,mo[k]/mx*100)+'%"></span><small>'+mo[k]+'</small></div>').join('');
+  }
+  function trend(){
+    return '<div style="display:flex;gap:6px"><input id="exWord" placeholder="اكتب كلمة (مثلا: وحشتني)" style="flex:1;padding:8px;border:1px solid #ccc;border-radius:10px;font-size:14px"><button class="ex-b p" id="exWordGo">دور</button></div><div id="exWordRes" style="margin-top:10px"></div>';
+  }
+  function runTrend(){
+    const q=$('exWord').value.trim().toLowerCase();const out=$('exWordRes');if(!q){out.textContent='اكتب كلمة الأول.';return;}
+    const mo={},by={};let total=0,first=null,last=null;
+    real().forEach(m=>{const c=(m.content||'').toLowerCase();let n=0,i=-1;while((i=c.indexOf(q,i+1))>=0)n++;if(!n)return;total+=n;const k=m.timestamp.getFullYear()*12+m.timestamp.getMonth();mo[k]=(mo[k]||0)+n;by[m.sender]=(by[m.sender]||0)+n;if(!first)first=m;last=m;});
+    if(!total){out.innerHTML='الكلمة دي مش موجودة في الشات.';return;}
+    const ks=Object.keys(mo).map(Number).sort((a,b)=>a-b),mx=Math.max(...ks.map(k=>mo[k]));
+    out.innerHTML='<div style="font-size:14px;line-height:1.8">«'+esc(q)+'» اتقالت <b>'+total+'</b> مرة<br>'+Object.entries(by).map(([s,n])=>esc(s)+': '+n).join(' • ')+'<br>أول مرة: '+esc(first.date)+' ('+esc(first.sender)+') • آخر مرة: '+esc(last.date)+'</div>'+ks.map(k=>'<div class="ex-bar"><span style="width:92px;flex:none">'+MN[k%12]+' '+Math.floor(k/12)+'</span><span class="b" style="width:'+Math.max(2,mo[k]/mx*100)+'%"></span><small>'+mo[k]+'</small></div>').join('');
+  }
+  let quiz=null;
+  function newQ(){
+    const senders=(allMessages.senders||[]).slice(0,4);
+    const pool=real().filter(m=>{const c=(m.content||'').trim();return c.length>=12&&c.length<=160&&!/^https?:/.test(c)&&!/omitted|الوسائط/.test(c)&&senders.includes(m.sender);});
+    if(!pool.length||senders.length<2)return null;
+    return {m:pool[Math.floor(Math.random()*pool.length)],senders};
+  }
+  function quizView(){
+    const body=$('exBody');
+    if(!quiz)quiz={score:0,n:0,cur:newQ()};
+    if(!quiz.cur){body.innerHTML='مفيش رسايل كفاية للعبة.';return;}
+    const q=quiz.cur;
+    body.innerHTML='<div style="font-size:13px">🎮 مين قال الرسالة دي؟ — النتيجة: <b id="exScore">'+quiz.score+'/'+quiz.n+'</b></div><div class="ex-q">'+esc(q.m.content)+'</div><div class="ex-opt" id="exOpt">'+q.senders.map(s=>'<button data-s="'+esc(s)+'">'+esc(s)+'</button>').join('')+'</div><div id="exFb" style="margin-top:10px;font-size:13px"></div>';
+    $('exOpt').onclick=e=>{const b=e.target.closest('button');if(!b||quiz.done)return;quiz.done=true;quiz.n++;const ok=b.dataset.s===q.m.sender;if(ok)quiz.score++;b.classList.add(ok?'ok':'no');
+      [...$('exOpt').children].forEach(x=>{if(x.dataset.s===q.m.sender)x.classList.add('ok');});
+      $('exScore').textContent=quiz.score+'/'+quiz.n;
+      $('exFb').innerHTML=(ok?'✅ صح!':'❌ غلط')+' ('+esc(q.m.date)+') <button class="ex-b p" id="exNextQ">السؤال اللي بعده ◀</button>';
+      $('exNextQ').onclick=()=>{quiz.done=false;quiz.cur=newQ();quizView();};};
+  }
+  const views={heat:['🔥 خريطة الوقت',heat],timeline:['📆 الخط الزمني',timeline],trend:['📈 كلمة عبر الزمن',trend],quiz:['🎮 مين قال ده؟',quizView]};
+  function open(tab){
+    if(allMessages.length<5){if(typeof showTempNotice==='function')showTempNotice('افتح شات الأول.');return;}
+    if(tab==='quiz'&&quiz)quiz.done=false;
+    $('exTabs').innerHTML=Object.entries(views).map(([k,v])=>'<button data-t="'+k+'" class="'+(k===tab?'on':'')+'">'+v[0]+'</button>').join('');
+    const body=$('exBody');
+    if(tab==='quiz'){quizView();}
+    else{body.innerHTML=views[tab][1]();}
+    if(tab==='trend'){$('exWordGo').onclick=runTrend;$('exWord').onkeydown=e=>{if(e.key==='Enter')runTrend();};}
+    body.querySelectorAll('.ex-bar[data-id]').forEach(el=>el.onclick=()=>{ov.style.display='none';if(typeof jumpToMessage==='function')jumpToMessage(+el.dataset.id);});
+    ov.style.display='flex';
+  }
+  $('exTabs').onclick=e=>{const b=e.target.closest('button');if(b)open(b.dataset.t);};
+  const anchor=$('statsBtn');
+  if(anchor){const b=document.createElement('button');b.id='exploreBtn';b.textContent='🧭 استكشاف (خريطة، زمن، لعبة)';b.addEventListener('click',()=>open('heat'));anchor.parentNode.insertBefore(b,anchor);}
+  window.__explorer={open};
+})();
+
 if(window.__EMBEDDED_CHAT__){
   hydrateFromEmbedded(window.__EMBEDDED_CHAT__);
 }

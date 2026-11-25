@@ -4011,6 +4011,32 @@ function hydrateFromEmbedded(data){
   window.__vplayer={ui,start,get idx(){return idx;}};
 })();
 
+/* ===== increment 22: voice minutes per month, per person ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const MN=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  const COL=['#00a884','#2575fc','#ff6a00','#8e2de2','#ee0979'];
+  function ui(){
+    const body=$('voiceBody');if(!body||$('vmBox'))return;
+    const vs=((window.__voice&&window.__voice.last)||[]).filter(v=>v.dur!=null);
+    if(!vs.length)return;
+    const who=[...new Set(vs.map(v=>v.m.sender))].slice(0,5);
+    const mo={};
+    vs.forEach(v=>{const k=v.m.timestamp.getFullYear()*12+v.m.timestamp.getMonth();const e=mo[k]||(mo[k]={});e[v.m.sender]=(e[v.m.sender]||0)+v.dur;});
+    const ks=Object.keys(mo).map(Number).sort((a,b)=>a-b);
+    const tot=k=>Object.values(mo[k]).reduce((a,b)=>a+b,0);
+    const mx=Math.max(...ks.map(tot));
+    const box=document.createElement('div');box.id='vmBox';
+    box.innerHTML='<div style="margin:12px 0 4px;font-weight:700;font-size:14px">⏱️ دقايق الريكوردات كل شهر (ملوّن حسب الشخص)</div>'+
+      '<div style="font-size:12px;margin-bottom:6px">'+who.map((w,i)=>'<span style="display:inline-block;width:10px;height:10px;background:'+COL[i]+';border-radius:2px;margin-left:4px"></span>'+esc(w)).join(' &nbsp; ')+'</div>'+
+      ks.map(k=>'<div class="ex-bar"><span style="width:92px;flex:none">'+MN[k%12]+' '+Math.floor(k/12)+'</span><span style="display:flex;width:'+Math.max(3,tot(k)/mx*100)+'%;height:12px;border-radius:3px;overflow:hidden">'+who.map((w,i)=>'<span style="flex:'+(mo[k][w]||0)+';background:'+COL[i]+'"></span>').join('')+'</span><small>'+(tot(k)/60).toFixed(1)+' د</small></div>').join('');
+    const anchor=$('voiceCsv');anchor.parentNode.parentNode.insertBefore(box,anchor.parentNode);
+  }
+  const obs=new MutationObserver(()=>{if($('voiceCsv')&&!$('vmBox'))ui();});
+  const vb=$('voiceBody');if(vb)obs.observe(vb,{childList:true});
+})();
+
 if(window.__EMBEDDED_CHAT__){
   hydrateFromEmbedded(window.__EMBEDDED_CHAT__);
 }

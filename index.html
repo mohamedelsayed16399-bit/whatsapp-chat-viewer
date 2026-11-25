@@ -2850,7 +2850,7 @@ function renderMessages(){
     list = list.filter(m => !m.system && m.dateObj && m.dateObj >= dateRange.from && m.dateObj <= dateRange.to);
     textQ = '';
   } else if(q){
-    list = list.filter(m => !m.system && m.content.toLowerCase().includes(q));
+    { const re = arRe(q, 'i'); list = list.filter(m => !m.system && re.test(m.content)); }
   }
 
   const hasCustomRange = !!(customDateFrom || customDateTo);
@@ -3135,10 +3135,24 @@ function resolveDateQuery(rawQuery){
   return null;
 }
 
+const __arCache = {};
+function arPattern(q){
+  const D = '[\\u064B-\\u065F\\u0670\\u0640]*';
+  const cls = {'ا':'[اأإآٱ]','أ':'[اأإآٱ]','إ':'[اأإآٱ]','آ':'[اأإآٱ]','ي':'[يى]','ى':'[يى]','ه':'[هة]','ة':'[هة]'};
+  let out = '';
+  for(const ch of q){
+    if(/[\u064B-\u065F\u0670\u0640]/.test(ch)) continue;
+    out += (cls[ch] || ch.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) + D;
+  }
+  return out;
+}
+function arRe(q, flags){
+  const k = q + '|' + flags;
+  return __arCache[k] || (__arCache[k] = new RegExp(arPattern(q), flags));
+}
 function highlightText(escapedContent, q){
   if(!q) return escapedContent;
-  const escQ = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const re = new RegExp('(' + escQ + ')', 'ig');
+  const re = new RegExp('(' + arPattern(q) + ')', 'ig');
   return escapedContent.replace(re, '<mark>$1</mark>');
 }
 
@@ -3793,4 +3807,4 @@ if(window.__EMBEDDED_CHAT__){
 }
 </script>
 </body>
-</html>
+      </html>

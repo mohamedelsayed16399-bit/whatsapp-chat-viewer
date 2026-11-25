@@ -3802,9 +3802,102 @@ function hydrateFromEmbedded(data){
   window.__deep={open,run};
 })();
 
+/* ===== round 17: voice recordings analysis ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const N=n=>Number(n).toLocaleString('en-US');
+  const fmtD=s=>{s=Math.round(s);if(s<60)return s+' ث';const m=Math.floor(s/60),r=s%60;if(m<60)return m+':'+String(r).padStart(2,'0')+' د';const h=Math.floor(m/60);return h+' س '+(m%60)+' د';};
+  const MN=['يناير','فبراير','مارس','أبريل','مايو','يونيو','يوليو','أغسطس','سبتمبر','أكتوبر','نوفمبر','ديسمبر'];
+  const ov=document.createElement('div');ov.className='ex-ov';ov.id='voiceOverlay';
+  ov.innerHTML='<div class="ex-card"><div class="ex-h"><b>🎙️ تحليل الريكوردات (الرسائل الصوتية)</b><button class="ex-b" id="voiceClose">✕</button></div><div id="voiceBody"></div></div>';
+  document.body.appendChild(ov);
+  $('voiceClose').onclick=()=>{ov.style.display='none';stopAll();};
+  ov.addEventListener('click',e=>{if(e.target===ov){ov.style.display='none';stopAll();}});
+  function stopAll(){ov.querySelectorAll('audio').forEach(a=>a.pause());}
+  const AUD_FILE=/\.(opus|ogg|m4a|aac|mp3|amr|wav)\b/i;
+  const AUD_TXT=/audio omitted|voice (message|note)|رسالة صوتية|ملف صوتي|تم استبعاد الصوت|صوت محذوف|<?(audio|voice)\b.*omitted/i;
+  function isVoice(m){
+    if(m.system||!m.sender)return null;
+    const c=m.content||'';let name=null;
+    try{name=extractAttachment(c);}catch(e){}
+    if(name&&AUD_FILE.test(name))return {name};
+    const mm=c.match(/(PTT|AUD)-[\w-]+\.\w+/i);if(mm)return {name:mm[0]};
+    if(AUD_TXT.test(c))return {name:null};
+    return null;
+  }
+  function loadDur(url){
+    return new Promise(res=>{
+      const a=new Audio();a.preload='metadata';let done=false;
+      const fin=v=>{if(done)return;done=true;a.src='';res(v);};
+      a.onloadedmetadata=()=>{if(isFinite(a.duration)&&a.duration>0)fin(a.duration);else{a.currentTime=1e7;a.ontimeupdate=()=>{a.ontimeupdate=null;fin(isFinite(a.duration)?a.duration:null);};}};
+      a.onerror=()=>fin(null);setTimeout(()=>fin(null),5000);a.src=url;
+    });
+  }
+  function bars(rows,fmt){const mx=Math.max(1,...rows.map(r=>r[1]));return rows.map(r=>'<div class="ex-bar"><span style="width:96px;flex:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(r[0])+'</span><span class="b" style="width:'+Math.max(r[1]?2:0,r[1]/mx*100)+'%"></span><small>'+(fmt?fmt(r[1]):N(r[1]))+'</small></div>').join('');}
+  const sec=(t,i)=>'<div style="margin:12px 0 4px;font-weight:700;font-size:14px">'+t+'</div>'+i;
+  let last=null;
+  async function open(){
+    if(allMessages.length<3){if(typeof showTempNotice==='function')showTempNotice('افتح شات الأول.');return;}
+    const body=$('voiceBody');ov.style.display='flex';
+    const all=allMessages.filter(m=>!m.system&&m.sender&&m.timestamp&&!isNaN(m.timestamp));
+    const tot={};all.forEach(m=>tot[m.sender]=(tot[m.sender]||0)+1);
+    const vs=[];all.forEach(m=>{const v=isVoice(m);if(v)vs.push({m,name:v.name,key:v.name?v.name.toLowerCase():null,dur:null});});
+    if(!vs.length){body.innerHTML='<div style="font-size:14px;line-height:1.8">مفيش رسائل صوتية في الشات ده.<br>لو الملف txt من غير ميديا، ابعت التصدير <b>مع الوسائط (zip)</b> وهتتحسب المدد كمان.</div>';return;}
+    const withMedia=vs.filter(v=>v.key&&mediaMap[v.key]);
+    body.innerHTML='<div id="vProg" style="font-size:13px">⏳ بنقيس مدد '+N(withMedia.length)+' رسالة صوتية...</div>';
+    const BATCH=6;let done=0;
+    for(let i=0;i<withMedia.length;i+=BATCH){
+      const part=withMedia.slice(i,i+BATCH);
+      const r=await Promise.all(part.map(v=>loadDur(mediaMap[v.key])));
+      part.forEach((v,k)=>v.dur=r[k]);done+=part.length;
+      const p=$('vProg');if(p)p.textContent='⏳ '+N(done)+' / '+N(withMedia.length);
+    }
+    last=vs;render(vs,tot,withMedia.length);
+  }
+  function render(vs,tot,nm){
+    const body=$('voiceBody');const known=vs.filter(v=>v.dur!=null);
+    const per={};vs.forEach(v=>{const p=per[v.m.sender]||(per[v.m.sender]={n:0,d:0,k:0,max:0});p.n++;if(v.dur!=null){p.d+=v.dur;p.k++;if(v.dur>p.max)p.max=v.dur;}});
+    const names=Object.keys(per).sort((a,b)=>per[b].n-per[a].n);
+    const totalDur=known.reduce((s,v)=>s+v.dur,0);
+    let h='<div style="font-size:14px;line-height:1.9"><b>'+N(vs.length)+'</b> رسالة صوتية ('+(vs.length/Object.values(tot).reduce((a,b)=>a+b,0)*100).toFixed(1)+'% من الشات)';
+    if(known.length)h+='<br>إجمالي المدة: <b>'+fmtD(totalDur)+'</b> • المتوسط: <b>'+fmtD(totalDur/known.length)+'</b> • أطول: <b>'+fmtD(Math.max(...known.map(v=>v.dur)))+'</b>';
+    else h+='<br><span style="color:#b26a00">المدد مش متاحة: الملف من غير ميديا ('+(nm?'الملفات الصوتية ماتفتحتش في المتصفح ده':'ارفع zip مع الوسائط')+'). الإحصائيات دي بالعدد بس.</span>';
+    h+='</div>';
+    h+=sec('🎤 مين بيبعت ريكوردات أكتر',bars(names.map(n=>[n,per[n].n])));
+    h+=sec('🗣️ نسبة الريكوردات من رسايل كل واحد',bars(names.map(n=>[n,Math.round(per[n].n/tot[n]*1000)/10]),v=>v+'%'));
+    if(known.length){
+      h+=sec('⏱️ إجمالي مدة كل واحد',bars(names.map(n=>[n,per[n].d]),fmtD));
+      h+=sec('📏 متوسط الريكورد',bars(names.filter(n=>per[n].k).map(n=>[n,per[n].d/per[n].k]),fmtD));
+      const bk=[['أقل من 10 ث',0,10],['10–30 ث',10,30],['30–60 ث',30,60],['1–3 د',60,180],['أكتر من 3 د',180,1e9]];
+      h+=sec('📊 توزيع الأطوال',bars(bk.map(([l,a,b])=>[l,known.filter(v=>v.dur>=a&&v.dur<b).length])));
+    }
+    const hr=Array(24).fill(0);vs.forEach(v=>hr[v.m.timestamp.getHours()]++);
+    h+=sec('🕒 الريكوردات حسب الساعة',bars(hr.map((c,i)=>[i+':00',c]).filter(r=>r[1]>0)));
+    const mo={};vs.forEach(v=>{const k=v.m.timestamp.getFullYear()*12+v.m.timestamp.getMonth();mo[k]=(mo[k]||0)+1;});
+    h+=sec('📆 الريكوردات حسب الشهر',bars(Object.keys(mo).map(Number).sort((a,b)=>a-b).map(k=>[MN[k%12]+' '+Math.floor(k/12),mo[k]])));
+    const dy={};vs.forEach(v=>{const k=v.m.timestamp.toDateString();dy[k]=(dy[k]||0)+1;});
+    const bd=Object.entries(dy).sort((a,b)=>b[1]-a[1])[0];
+    h+='<div style="margin-top:10px;font-size:13px">📅 أكتر يوم ريكوردات: <b>'+esc(new Date(bd[0]).toLocaleDateString('ar-EG'))+'</b> ('+bd[1]+')</div>';
+    if(known.length){
+      const top=known.slice().sort((a,b)=>b.dur-a.dur).slice(0,8);
+      h+=sec('🏆 أطول 8 ريكوردات','<div>'+top.map(v=>'<div class="ex-q" style="padding:8px;margin:6px 0;font-size:13px">'+esc(v.m.sender)+' • '+esc(v.m.date+' '+v.m.time)+' • <b>'+fmtD(v.dur)+'</b> <button class="ex-b" data-id="'+v.m.id+'">روح للرسالة</button><br><audio controls preload="none" src="'+mediaMap[v.key]+'" style="width:100%;margin-top:6px"></audio></div>').join('')+'</div>');
+    }
+    h+='<div style="margin-top:12px"><button class="ex-b p" id="voiceCsv">📄 تصدير جدول الريكوردات CSV</button></div>';
+    h+='<div style="margin-top:8px;font-size:12px;opacity:.7">ملاحظة: التفريغ لنص (تحويل الصوت لكلام) مش متاح، والمدد بتتحسب جوه المتصفح بدون رفع أي حاجة.</div>';
+    body.innerHTML=h;
+    body.querySelectorAll('button[data-id]').forEach(b=>b.onclick=()=>{ov.style.display='none';stopAll();if(typeof jumpToMessage==='function')jumpToMessage(+b.dataset.id);});
+    $('voiceCsv').onclick=()=>{const q=v=>'"'+String(v==null?'':v).replace(/"/g,'""')+'"';const rows=['التاريخ,الوقت,المرسل,الملف,المدة بالثواني'].concat(vs.map(v=>[v.m.date,v.m.time,v.m.sender,v.name||'',v.dur==null?'':Math.round(v.dur*10)/10].map(q).join(',')));
+      const b=new Blob(['\ufeff'+rows.join('\r\n')],{type:'text/csv;charset=utf-8'});const u=URL.createObjectURL(b),l=document.createElement('a');l.href=u;l.download='voice-notes.csv';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);};
+  }
+  const anchor=$('statsBtn');
+  if(anchor){const b=document.createElement('button');b.id='voiceBtn';b.textContent='🎙️ تحليل الريكوردات';b.addEventListener('click',open);anchor.parentNode.insertBefore(b,anchor);}
+  window.__voice={open,isVoice,get last(){return last;}};
+})();
+
 if(window.__EMBEDDED_CHAT__){
   hydrateFromEmbedded(window.__EMBEDDED_CHAT__);
 }
 </script>
 </body>
-      </html>
+</html>

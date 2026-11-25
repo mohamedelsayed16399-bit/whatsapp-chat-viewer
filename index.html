@@ -3670,6 +3670,7 @@ function hydrateFromEmbedded(data){
   .ex-hm{display:grid;grid-template-columns:34px repeat(24,1fr);gap:2px;font-size:9px}
   .ex-hm i{aspect-ratio:1;border-radius:2px;display:block}
   .ex-bar{display:flex;align-items:center;gap:6px;font-size:12px;margin:3px 0;cursor:pointer}
+  .ex-bar small{white-space:nowrap;min-width:48px;text-align:left}
   .ex-bar span.b{height:12px;background:#00a884;border-radius:3px;display:block}
   .ex-q{background:#f0f2f5;border-radius:12px;padding:14px;margin:10px 0;font-size:16px;line-height:1.6;white-space:pre-wrap;word-break:break-word}
   body.dark .ex-q{background:#111b21}
@@ -3986,13 +3987,14 @@ function hydrateFromEmbedded(data){
     list=((window.__voice&&window.__voice.last)||[]).filter(v=>v.key&&mediaMap[v.key]).sort((a,b)=>a.m.timestamp-b.m.timestamp);
     if(!list.length)return;
     const box=document.createElement('div');box.id='vpBox';box.style.cssText='margin:12px 0;padding:10px;border-radius:12px;background:#00a88422';
-    box.innerHTML='<b>▶ تشغيل الريكوردات ورا بعض</b><div id="vpNow" style="font-size:13px;margin:6px 0">'+list.length+' ريكورد جاهزين</div><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="ex-b" id="vpPrev">⏮</button><button class="ex-b p" id="vpPlay">▶ شغّل</button><button class="ex-b" id="vpNext">⏭</button><select id="vpRate" class="ex-b"><option value="1">1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select><select id="vpWho" class="ex-b"><option value="">الكل</option>'+[...new Set(list.map(v=>v.m.sender))].map(s=>'<option>'+esc(s)+'</option>').join('')+'</select><button class="ex-b" id="vpGo">روح للرسالة</button></div>';
+    box.innerHTML='<b>▶ تشغيل الريكوردات ورا بعض</b><div id="vpNow" style="font-size:13px;margin:6px 0">'+list.length+' ريكورد جاهزين</div><div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center"><button class="ex-b" id="vpPrev">⏮</button><button class="ex-b p" id="vpPlay">▶ شغّل</button><button class="ex-b" id="vpNext">⏭</button><select id="vpRate" class="ex-b"><option value="1">1×</option><option value="1.5">1.5×</option><option value="2">2×</option></select><select id="vpWho" class="ex-b"><option value="">الكل</option>'+[...new Set(list.map(v=>v.m.sender))].map(s=>'<option>'+esc(s)+'</option>').join('')+'</select><button class="ex-b" id="vpGo">روح للرسالة</button><button class="ex-b" id="vpOnly">🎙️ اعرض الريكوردات بس في الشات</button></div>';
     const first=body.querySelector('div');body.insertBefore(box,first?first.nextSibling:null);
     $('vpPlay').onclick=()=>playing?pause():start(idx);
     $('vpPrev').onclick=()=>start(Math.max(0,idx-1));
     $('vpNext').onclick=()=>start(Math.min(cur().length-1,idx+1));
     $('vpRate').onchange=e=>{rate=+e.target.value;if(au)au.playbackRate=rate;};
     $('vpWho').onchange=()=>{idx=0;pause();now(0);};
+    $('vpOnly').onclick=()=>{pause();$('voiceOverlay').style.display='none';const tf=$('typeFilter');if(tf){const adv=$('advFilters');if(adv&&!adv.classList.contains('show')){const bt=$('advToggleBtn');if(bt)bt.click();}tf.value='audio';tf.dispatchEvent(new Event('change'));}};
     $('vpGo').onclick=()=>{const v=cur()[idx];if(!v)return;$('voiceOverlay').style.display='none';pause();if(typeof jumpToMessage==='function')jumpToMessage(v.m.id);};
     $('voiceClose').addEventListener('click',pause);
   }

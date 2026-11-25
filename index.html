@@ -2850,7 +2850,7 @@ function renderMessages(){
     list = list.filter(m => !m.system && m.dateObj && m.dateObj >= dateRange.from && m.dateObj <= dateRange.to);
     textQ = '';
   } else if(q){
-    { const re = arRe(q, 'i'); list = list.filter(m => !m.system && re.test(m.content)); }
+    { const re = arRe(q, 'i'); list = list.filter(m => !m.system && (re.test(m.content) || (window.__trText && re.test(window.__trText(m))))); }
   }
 
   const hasCustomRange = !!(customDateFrom || customDateTo);
@@ -4039,9 +4039,71 @@ function hydrateFromEmbedded(data){
   const vb=$('voiceBody');if(vb)obs.observe(vb,{childList:true});
 })();
 
+
+/* ===== round 24: transcripts everywhere (inline under bubbles, searchable, batch all, top words, export) ===== */
+(function(){
+  const $=id=>document.getElementById(id);
+  const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+  const T=()=>window.__transcripts||(window.__transcripts={});
+  const kk=()=>'wa-viewer-tr-'+(typeof storageKey!=='undefined'?storageKey:'x');
+  let loadedFor=null;
+  function ld(){const k=kk();if(loadedFor===k)return;loadedFor=k;try{Object.assign(T(),JSON.parse(localStorage.getItem(k)||'{}'));}catch(e){}}
+  function sv(){try{localStorage.setItem(kk(),JSON.stringify(Object.fromEntries(Object.entries(T()).filter(([a,b])=>b))));}catch(e){}}
+  window.__trText=function(m){try{ld();const a=extractAttachment(m.content);return a?(T()[a.toLowerCase()]||''):'';}catch(e){return '';}};
+  const keyOfSrc=src=>{for(const k in mediaMap){if(mediaMap[k]===src)return k;}return null;};
+  let busy=false,stop=false;
+  async function one(key,model){
+    const it={key};const t=await window.__tr.transcribeOne(it,model||'Xenova/whisper-base','arabic',()=>{});
+    T()[key]=t||'(مفيش كلام واضح)';sv();return T()[key];
+  }
+  function decorate(){
+    const box=$('messages');if(!box||!window.__tr)return;ld();
+    box.querySelectorAll('.audio-wrap').forEach(w=>{
+      if(w.dataset.trd)return;const au=w.querySelector('audio');if(!au)return;
+      const key=keyOfSrc(au.getAttribute('src'));if(!key)return;w.dataset.trd='1';
+      const d=document.createElement('div');d.className='tr-inline';d.style.cssText='font-size:12.5px;margin-top:4px;line-height:1.6;color:#333;background:#00a88418;border-radius:8px;padding:4px 8px';
+      const paint=()=>{const t=T()[key];
+        if(t){d.innerHTML='📝 '+esc(t);d.style.display='block';}
+        else{d.innerHTML='<button type="button" style="border:0;background:none;color:#00a884;font-weight:600;cursor:pointer;padding:0">📝 فرّغ الريكورد ده</button>';
+          d.firstChild.onclick=async()=>{if(busy){d.textContent='استنى، فيه تفريغ شغال...';return;}busy=true;d.textContent='⏳ بيفرّغ (أول مرة بينزّل النموذج)...';
+            try{await one(key);}catch(e){d.textContent='⚠️ فشل: '+(e&&e.message||e);busy=false;return;}busy=false;paint();};}};
+      paint();w.appendChild(d);
+    });
+  }
+  const mo=new MutationObserver(()=>{clearTimeout(mo.t);mo.t=setTimeout(decorate,150);});
+  const mb=$('messages');if(mb)mo.observe(mb,{childList:true,subtree:true});
+  const SW=new Set('في من على عن الى إلى ان أن انا أنا انت أنت هو هي ده دي دا ايه إيه ما مش لا لو يا بس كل ده كده اللي اللى مع ف و او أو ب ل ك ثم قد لقد هذا هذه ذلك التي الذي كان كانت يكون عند بعد قبل لما لسه برضو طب طيب اه آه ايوه خلاص يعني بقى بقا حاجة دلوقتي علشان عشان زي ماله'.split(' '));
+  function topWords(rows){const f={};rows.forEach(t=>{(t.toLowerCase().replace(/[\u064B-\u0652]/g,'').match(/[\u0600-\u06FFa-z0-9]{3,}/g)||[]).forEach(w=>{if(!SW.has(w))f[w]=(f[w]||0)+1;});});return Object.entries(f).sort((a,b)=>b[1]-a[1]).slice(0,12);}
+  function ui(){
+    const body=$('voiceBody');if(!body||$('tr2Box'))return;ld();
+    const vs=((window.__voice&&window.__voice.last)||[]).filter(v=>v.key&&mediaMap[v.key]);
+    if(!vs.length||!window.__tr)return;
+    const box=document.createElement('div');box.id='tr2Box';box.style.cssText='margin:14px 0;padding:10px;border-radius:12px;background:#7c4dff1a';
+    box.innerHTML='<b>🧾 التفريغ الكامل والبحث والكلمات</b><div id="tr2Stat" style="font-size:13px;margin:6px 0"></div>'+
+     '<div style="display:flex;gap:6px;flex-wrap:wrap"><button class="ex-b" id="tr2All" type="button">⚡ فرّغ الكل</button><button class="ex-b" id="tr2Stop" type="button">⏹ وقف</button><button class="ex-b" id="tr2Words" type="button">🔤 أكتر كلمات</button><button class="ex-b" id="tr2Exp" type="button">⬇️ الشات + التفريغ (TXT)</button></div>'+
+     '<div id="tr2Prog" style="font-size:12px;margin:6px 0"></div><div id="tr2Out"></div>';
+    body.insertBefore(box,body.children[1]||null);
+    const stat=()=>{ld();const n=vs.filter(v=>T()[v.key]).length;$('tr2Stat').textContent='اتفرّغ '+n+' من '+vs.length+' ريكورد. التفريغ بيظهر تحت كل ريكورد في الشات وبيدخل في البحث.';};
+    stat();
+    $('tr2All').onclick=async()=>{if(busy)return;busy=true;stop=false;const todo=vs.filter(v=>!T()[v.key]);const t0=Date.now();let done=0;
+      for(const v of todo){if(stop)break;$('tr2Prog').textContent='⏳ '+(done+1)+' / '+todo.length+(done?' • باقي حوالي '+Math.round((Date.now()-t0)/done*(todo.length-done)/60000)+' دقيقة':' (أول واحد بينزّل النموذج)');
+        try{await one(v.key);}catch(e){$('tr2Prog').textContent='⚠️ وقف بسبب: '+(e&&e.message||e);break;}done++;stat();}
+      busy=false;if(!/⚠️/.test($('tr2Prog').textContent))$('tr2Prog').textContent=stop?'⏹ اتوقف. اللي خلص اتحفظ.':'✅ خلصنا الكل';stat();decorate();};
+    $('tr2Stop').onclick=()=>{stop=true;};
+    $('tr2Words').onclick=()=>{ld();const by={};vs.forEach(v=>{if(T()[v.key])(by[v.m.sender]=by[v.m.sender]||[]).push(T()[v.key]);});
+      const names=Object.keys(by);if(!names.length){$('tr2Out').textContent='لسه مفيش تفريغ. دوس "فرّغ الكل" الأول.';return;}
+      $('tr2Out').innerHTML=names.map(n=>'<div class="ex-q" style="padding:8px;margin:6px 0;font-size:13px"><b>'+esc(n)+'</b> ('+by[n].length+' ريكورد)<br>'+topWords(by[n]).map(([w,c])=>esc(w)+' <small>×'+c+'</small>').join(' • ')+'</div>').join('');};
+    $('tr2Exp').onclick=()=>{ld();const rows=allMessages.filter(m=>!m.system).map(m=>{const t=window.__trText(m);return '['+m.date+' '+m.time+'] '+m.sender+': '+(t?'🎙️ '+t:m.content);});
+      const b=new Blob(['\ufeff'+rows.join('\n')],{type:'text/plain;charset=utf-8'});const u=URL.createObjectURL(b),l=document.createElement('a');l.href=u;l.download='chat-with-transcripts.txt';document.body.appendChild(l);l.click();l.remove();setTimeout(()=>URL.revokeObjectURL(u),2000);};
+  }
+  const o2=new MutationObserver(()=>{if($('voiceCsv')&&!$('tr2Box'))ui();});
+  const vb=$('voiceBody');if(vb)o2.observe(vb,{childList:true});
+  window.__tr2={decorate,ui};
+})();
+
 if(window.__EMBEDDED_CHAT__){
   hydrateFromEmbedded(window.__EMBEDDED_CHAT__);
 }
 </script>
 </body>
-</html>
+      </html>

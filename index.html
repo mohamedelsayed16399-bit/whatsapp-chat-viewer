@@ -4084,7 +4084,7 @@ window.__trCore=(function(){
     box.querySelectorAll('.audio-wrap').forEach(w=>{
       if(w.dataset.trd)return;const au=w.querySelector('audio');if(!au)return;
       const key=keyOfSrc(au.getAttribute('src'));if(!key)return;w.dataset.trd='1';
-      const d=document.createElement('div');d.className='tr-inline';d.style.cssText='font-size:12.5px;margin-top:4px;line-height:1.6;color:#333;background:#00a88418;border-radius:8px;padding:4px 8px';
+      const d=document.createElement('div');w.style.flexWrap='wrap';d.className='tr-inline';d.style.cssText='flex:0 0 100%;width:100%;box-sizing:border-box;font-size:12.5px;margin-top:4px;line-height:1.6;color:#333;background:#00a88418;border-radius:8px;padding:4px 8px';
       const paint=()=>{const t=T()[key];
         if(t){d.innerHTML='📝 <span class="tr-t">'+esc(t)+'</span> <button type="button" class="tr-ed" title="عدّل النص" style="border:0;background:none;cursor:pointer;padding:0 4px">✏️</button>';d.style.display='block';
           d.querySelector('.tr-ed').onclick=()=>{d.innerHTML='<textarea style="width:100%;min-height:60px;font:inherit;border-radius:8px;border:1px solid #8886;padding:4px"></textarea><div><button type="button" class="tr-sv" style="margin:4px 2px">💾 احفظ</button><button type="button" class="tr-cx">إلغاء</button></div>';const ta=d.querySelector('textarea');ta.value=t;

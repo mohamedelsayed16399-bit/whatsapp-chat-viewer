@@ -3898,14 +3898,37 @@ function hydrateFromEmbedded(data){
   window.__voice={open,isVoice,get last(){return last;}};
 })();
 
+/* ===== transcript store scoped per chat (fix: no leaking between chats) ===== */
+window.__trCore=(function(){
+  let cacheArr=null,cacheLen=-1,cacheId='x',cur=null;
+  function chatId(){
+    try{
+      if(typeof allMessages==='undefined'||!allMessages)return 'x';
+      if(cacheArr===allMessages&&cacheLen===allMessages.length)return cacheId;
+      let h=0,str=allMessages.map(m=>m.date+'|'+m.time+'|'+m.sender+'|'+m.content).join('\n');
+      cacheId=hashText(str)+'-'+allMessages.length;cacheArr=allMessages;cacheLen=allMessages.length;return cacheId;
+    }catch(e){return 'x';}
+  }
+  const key=()=>'wa-viewer-tr2-'+chatId();
+  const T=()=>window.__transcripts||(window.__transcripts={});
+  function sync(){
+    const k=key();if(cur===k)return;
+    const t=T();Object.keys(t).forEach(x=>delete t[x]);cur=k;
+    try{Object.assign(t,JSON.parse(localStorage.getItem(k)||'{}'));}catch(e){}
+  }
+  function save(){sync();try{localStorage.setItem(cur,JSON.stringify(Object.fromEntries(Object.entries(T()).filter(([a,b])=>b))));}catch(e){}}
+  function saveTo(k,name,text){try{const o=JSON.parse(localStorage.getItem(k)||'{}');o[name]=text;localStorage.setItem(k,JSON.stringify(o));}catch(e){}}
+  return {key,sync,save,saveTo,chatId};
+})();
+
 /* ===== round 18: in-browser voice transcription (Whisper via transformers.js, optional, downloads a model) ===== */
 (function(){
   const $=id=>document.getElementById(id);
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const T=window.__transcripts=window.__transcripts||{};
-  const trKey=()=>'wa-viewer-tr-'+(typeof storageKey!=='undefined'?storageKey:'x');
-  function trLoad(){try{Object.assign(T,JSON.parse(localStorage.getItem(trKey())||'{}'));}catch(e){}}
-  function trSave(){try{localStorage.setItem(trKey(),JSON.stringify(Object.fromEntries(Object.entries(T).filter(([k,v])=>v))));}catch(e){}}
+  const trKey=()=>window.__trCore.key();
+  function trLoad(){window.__trCore.sync();}
+  function trSave(){window.__trCore.save();}
   let asr=null,asrModel=null,loading=null,busy=false;
   const LIB='https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2';
   async function getAsr(model,onProg){
@@ -3929,8 +3952,9 @@ function hydrateFromEmbedded(data){
     }finally{try{ctx.close();}catch(e){}}
   }
   async function transcribeOne(item,model,lang,onProg){
+    const srcUrl=mediaMap[item.key];
     const a=await getAsr(model,onProg);
-    const audio=await decode(mediaMap[item.key]);
+    const audio=await decode(srcUrl);
     const opts={chunk_length_s:30,stride_length_s:5,task:'transcribe'};
     if(lang!=='auto')opts.language=lang;
     const out=await a(audio,opts);
@@ -3960,7 +3984,7 @@ function hydrateFromEmbedded(data){
         for(let k=0;k<arr.length;k++){
           const it=arr[k];if(T[it.key])continue;
           prog.textContent='⏳ بنفرّغ '+(k+1)+' / '+arr.length+'...';
-          try{T[it.key]=await transcribeOne(it,model,lang,onProg)||'(مفيش كلام واضح)';}
+          try{const ck=window.__trCore.key();const tx=await transcribeOne(it,model,lang,onProg)||'(مفيش كلام واضح)';if(window.__trCore.key()!==ck){window.__trCore.saveTo(ck,it.key,tx);prog.textContent='الشات اتغيّر، التفريغ اتحفظ للشات القديم';break;}T[it.key]=tx;}
           catch(e){console.error(e);T[it.key]='';prog.textContent='⚠️ فشل: '+(e&&e.message||e);if(/fetch|network|import|load/i.test(String(e&&e.message)))break;}
           trSave();draw();
         }
@@ -4045,16 +4069,15 @@ function hydrateFromEmbedded(data){
   const $=id=>document.getElementById(id);
   const esc=s=>String(s==null?'':s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
   const T=()=>window.__transcripts||(window.__transcripts={});
-  const kk=()=>'wa-viewer-tr-'+(typeof storageKey!=='undefined'?storageKey:'x');
-  let loadedFor=null;
-  function ld(){const k=kk();if(loadedFor===k)return;loadedFor=k;try{Object.assign(T(),JSON.parse(localStorage.getItem(k)||'{}'));}catch(e){}}
-  function sv(){try{localStorage.setItem(kk(),JSON.stringify(Object.fromEntries(Object.entries(T()).filter(([a,b])=>b))));}catch(e){}}
+    function ld(){window.__trCore.sync();}
+  function sv(){window.__trCore.save();}
   window.__trText=function(m){try{ld();const a=extractAttachment(m.content);return a?(T()[a.toLowerCase()]||''):'';}catch(e){return '';}};
   const keyOfSrc=src=>{for(const k in mediaMap){if(mediaMap[k]===src)return k;}return null;};
   let busy=false,stop=false;
   async function one(key,model){
-    const it={key};const pm=localStorage.getItem('wa-viewer-tr-model')||'Xenova/whisper-base',pl=localStorage.getItem('wa-viewer-tr-lang')||'arabic';const t=await window.__tr.transcribeOne(it,model||pm,pl,()=>{});
-    T()[key]=t||'(مفيش كلام واضح)';sv();return T()[key];
+    const it={key};const pm=localStorage.getItem('wa-viewer-tr-model')||'Xenova/whisper-base',pl=localStorage.getItem('wa-viewer-tr-lang')||'arabic';const ck=window.__trCore.key();const t=await window.__tr.transcribeOne(it,model||pm,pl,()=>{});
+    const tx=t||'(مفيش كلام واضح)';if(window.__trCore.key()!==ck){window.__trCore.saveTo(ck,key,tx);throw new Error('الشات اتغيّر، التفريغ اتحفظ للشات القديم');}
+    ld();T()[key]=tx;sv();return tx;
   }
   function decorate(){
     const box=$('messages');if(!box||!window.__tr)return;ld();
